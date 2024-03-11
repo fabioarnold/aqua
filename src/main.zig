@@ -39,7 +39,7 @@ fn initAppDelegate() !objc.Object {
 }
 
 fn initWindow() void {
-    const rect = cocoa.NSRect.make(150, 100, 640, 400);
+    const rect = cocoa.NSRect.make(100, 100, 512, 512);
     const stylemask: cocoa.NSWindow.StyleMask = .{
         .closable = true,
         .miniaturizable = true,
@@ -178,6 +178,19 @@ fn buildShaders(device: objc.Object) !objc.Object {
     return pipeline;
 }
 
+var alpha: f32 = 0;
+var w: f32 = 1024;
+var h: f32 = 1024;
+
+pub const MTLViewport = extern struct {
+    originX: f64,
+    originY: f64,
+    width: f64,
+    height: f64,
+    znear: f64,
+    zfar: f64,
+};
+
 fn drawInMTKView(target: objc.c.id, _: objc.c.SEL, view_id: objc.c.id) callconv(.C) void {
     const self = objc.Object.fromId(target); // delegate
     const view = objc.Object.fromId(view_id);
@@ -186,17 +199,48 @@ fn drawInMTKView(target: objc.c.id, _: objc.c.SEL, view_id: objc.c.id) callconv(
     const cmd = queue.getProperty(objc.Object, "commandBuffer");
     const rpd = view.getProperty(objc.Object, "currentRenderPassDescriptor");
     const enc = cmd.msgSend(objc.Object, "renderCommandEncoderWithDescriptor:", .{rpd});
+    const size = view.getProperty(cocoa.NSSize, "drawableSize");
+    w = @floatCast(size.width);
+    h = @floatCast(size.height);
+    enc.setProperty("viewport", MTLViewport{
+        .originX = 0,
+        .originY = 0,
+        .width = size.width,
+        .height = size.height,
+        .znear = 0,
+        .zfar = 1,
+    });
 
     const MTLPrimitiveTypeTriangle = 3;
     const pipeline = self.getInstanceVariable("pipeline");
     enc.setProperty("renderPipelineState", pipeline);
 
     // float3 is padded to the size of float4
-    const positions = [3 * 4]f32{
-        -0.8, 0.8,  0.0, 1,
-        0.0,  -0.8, 0.0, 1,
-        0.8,  0.8,  0.0, 1,
+    var positions = [3 * 4]f32{
+        -0.866, 0.5, 0.0, 1,
+        0.0,    -1,  0.0, 1,
+        0.866,  0.5, 0.0, 1,
     };
+    if (false) {
+        // rotate
+        alpha += 0.02;
+        const c = @cos(alpha);
+        const s = @sin(alpha);
+        for (0..3) |i| {
+            const x = positions[4 * i + 0];
+            const y = positions[4 * i + 1];
+            positions[4 * i + 0] = c * x + s * y;
+            positions[4 * i + 1] = -s * x + c * y;
+        }
+    } else {
+        // scale
+        for (0..3) |i| {
+            const x = positions[4 * i + 0];
+            const y = positions[4 * i + 1];
+            positions[4 * i + 0] = (x + 1) * 1024.0 / w - 1;
+            positions[4 * i + 1] = 1 - (1 - y) * 1024.0 / h;
+        }
+    }
     const colors = [3 * 4]f32{
         1.0, 0.5, 0.2, 1,
         0.8, 1.0, 0.0, 1,
@@ -217,8 +261,8 @@ fn drawInMTKView(target: objc.c.id, _: objc.c.SEL, view_id: objc.c.id) callconv(
         "drawPrimitives:vertexStart:vertexCount:",
         .{ @as(u64, MTLPrimitiveTypeTriangle), @as(u64, 0), @as(u64, 3) },
     );
-
     enc.msgSend(void, "endEncoding", .{});
+
     cmd.msgSend(void, "presentDrawable:", .{view.getProperty(objc.Object, "currentDrawable")});
     cmd.msgSend(void, "commit", .{});
 }
@@ -232,5 +276,7 @@ fn drawableSizeWillChange(
     _ = target;
     _ = sel;
     _ = view_id;
-    _ = size;
+    w = @floatCast(size.width);
+    h = @floatCast(size.height);
+    // std.debug.print("new size {d:.2} {d:.2}\n", .{size.width, size.height});
 }
